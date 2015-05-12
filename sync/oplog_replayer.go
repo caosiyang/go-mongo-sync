@@ -85,6 +85,9 @@ func (p *Worker) Run() error {
 					goto Begin
 				default:
 					fmt.Println("Unknown Error", err)
+					p.session.Close()
+					p.session = utils.Reconnect(p.hostportstr)
+					goto Begin
 				}
 			}
 		}
@@ -145,8 +148,8 @@ func (p *OplogReplayer) Run() error {
 			// [insert/update/delete] hash to different workers
 			switch oplog["op"] {
 			case "c":
+				// wait for all previous operations done
 				for {
-					// check qsize
 					ready := true
 					for i := 0; i < p.nWorkers; i++ {
 						if p.workers[i].Qsize() > 0 {
@@ -155,10 +158,19 @@ func (p *OplogReplayer) Run() error {
 						}
 					}
 					if ready {
-						// TODO blocking until done
-						p.workers[0].Push(oplog)
+						break
+					} else {
+						time.Sleep(time.Millisecond * 10) // sleep 10ms
 					}
-					time.Sleep(time.Millisecond * 100) // sleep 100ms
+				}
+				p.workers[0].Push(oplog)
+				// wait for command done
+				for {
+					if p.workers[0].Qsize() == 0 {
+						break
+					} else {
+						time.Sleep(time.Millisecond * 10) // sleep 10ms
+					}
 				}
 			case "i":
 				fallthrough
