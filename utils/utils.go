@@ -95,8 +95,10 @@ func ReplayOplog(session *mgo.Session, oplog bson.M) error {
 	case "i": // insert
 		dbname := strings.Split(ns.(string), ".")[0]
 		collname := strings.Split(ns.(string), ".")[1]
-		if err := session.DB(dbname).C(collname).Insert(oplog["o"]); err != nil {
-			//fmt.Println("insert", err)
+		//if err := session.DB(dbname).C(collname).Insert(oplog["o"]); err != nil {
+		id := oplog["o"].(bson.M)["_id"]
+		if _, err := session.DB(dbname).C(collname).UpsertId(id, oplog["o"]); err != nil {
+			fmt.Println("insert", err)
 			return err
 		}
 	case "u": // update
@@ -120,6 +122,7 @@ func ReplayOplog(session *mgo.Session, oplog bson.M) error {
 			return err
 		}
 	case "n": // no-op
+		// do nothing
 	default:
 	}
 	return nil

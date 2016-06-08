@@ -3,7 +3,7 @@ package sync
 import (
 	"errors"
 	"flag"
-	"fmt"
+	"log"
 	"strconv"
 	"strings"
 )
@@ -12,21 +12,20 @@ import (
 type Config struct {
 	From        string
 	To          string
-	Database    string
-	Query       string
-	Log         string
-	StartOptime int
 	SrcHost     string
 	SrcPort     int
 	DstHost     string
 	DstPort     int
+	StartOptime int
+	OplogOnly   bool
+	//Log         string
 }
 
 // load and parse command-line flags
 func (p *Config) Load() error {
 	flag.StringVar(&p.From, "from", "", "source, should be a member of replica-set")
 	flag.StringVar(&p.To, "to", "", "destination, should be a mongos or mongod instance")
-	flag.StringVar(&p.Database, "db", "", "database to sync")
+	flag.BoolVar(&p.OplogOnly, "oplog", false, "replay oplog only")
 	flag.Parse()
 	if err := p.validate(); err != nil {
 		return err
@@ -51,8 +50,11 @@ func (p *Config) validate() error {
 
 // print config
 func (p *Config) print() {
-	fmt.Printf("from: %s:%d\n", p.SrcHost, p.SrcPort)
-	fmt.Printf("to:   %s:%d\n", p.DstHost, p.DstPort)
+	log.Printf("from: %s:%d\n", p.SrcHost, p.SrcPort)
+	log.Printf("to:   %s:%d\n", p.DstHost, p.DstPort)
+	if p.OplogOnly {
+		log.Println("oplogOnly: true")
+	}
 }
 
 // parse hostportstr

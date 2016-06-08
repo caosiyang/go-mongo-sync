@@ -1,24 +1,23 @@
 package main
 
 import (
-	"fmt"
+	"log"
+	"runtime"
 
 	"go-mongo-sync/sync"
 )
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	var config sync.Config
 	if err := config.Load(); err != nil {
-		fmt.Print(err)
-		return
+		log.Fatal(err)
 	}
 	syncer := sync.NewSynchronizer(config)
 	if syncer == nil {
-		fmt.Println("NewSyncronizer failed")
-		return
+		log.Fatal("NewSyncronizer failed")
 	}
 	if err := syncer.Run(); err != nil {
-		fmt.Println(err)
-		return
+		log.Fatal(err)
 	}
 }

@@ -1,8 +1,9 @@
 package sync
 
 import (
-	"fmt"
 	"hash/crc32"
+	"log"
+	"runtime"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 // oplog replay worker
 type Worker struct {
+	id          int
 	hostportstr string
 	session     *mgo.Session
 	oplogChan   chan bson.M
@@ -21,21 +23,22 @@ type Worker struct {
 	optime      bson.MongoTimestamp
 	nOplog      uint64
 	nDone       uint64
-	id          int
 }
 
 func NewWorker(hostportstr string, id int) *Worker {
 	p := new(Worker)
+	p.id = id
 	p.hostportstr = hostportstr
 	p.oplogChan = make(chan bson.M, 100)
-	s, err := mgo.Dial(p.hostportstr)
-	if err != nil {
-		fmt.Println(err)
+	if s, err := mgo.Dial(p.hostportstr); err != nil {
+		log.Println(err)
 		return nil
+	} else {
+		p.session = s
+		p.session.SetSafe(&mgo.Safe{W: 1})
+		p.session.SetSocketTimeout(0)
+		p.session.SetSyncTimeout(0)
 	}
-	p.session = s
-	p.session.SetSafe(&mgo.Safe{W: 1})
-	p.id = id
 	return p
 }
 
@@ -59,9 +62,6 @@ func (p *Worker) Push(oplog bson.M) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	p.nOplog++
-	//if p.nOplog%1000 == 0 {
-	//	fmt.Println("goroutine", p.id, p.nOplog)
-	//}
 }
 
 // replay oplog
@@ -73,20 +73,24 @@ func (p *Worker) Run() error {
 			// TODO
 			switch err.(type) {
 			case *mgo.LastError:
-				fmt.Println("LastError", err)
+				log.Println("LastError", err)
 			default:
 				switch err.Error() {
 				case "not found":
-					//fmt.Println("Error", err)
+					//log.Println("Error", err)
 				case "EOF": // reconnect
-					fmt.Println("Error", err, oplog)
+					log.Println("Error", err, oplog)
 					p.session.Close()
 					p.session = utils.Reconnect(p.hostportstr)
+					p.session.SetSocketTimeout(0)
+					p.session.SetSyncTimeout(0)
 					goto Begin
 				default:
-					fmt.Println("Unknown Error", err)
+					log.Println("Unknown Error", err)
 					p.session.Close()
 					p.session = utils.Reconnect(p.hostportstr)
+					p.session.SetSocketTimeout(0)
+					p.session.SetSyncTimeout(0)
 					goto Begin
 				}
 			}
@@ -103,10 +107,9 @@ type OplogReplayer struct {
 	src        string
 	dst        string
 	optime     bson.MongoTimestamp
-	oplogChan  chan bson.M
 	srcSession *mgo.Session
 	nWorkers   int
-	workers    [16]*Worker // TODO slice?
+	workers    [32]*Worker // TODO slice?
 }
 
 func NewOplogReplayer(src string, dst string, optime bson.MongoTimestamp) *OplogReplayer {
@@ -114,21 +117,21 @@ func NewOplogReplayer(src string, dst string, optime bson.MongoTimestamp) *Oplog
 	p.src = src
 	p.dst = dst
 	p.optime = optime
-	p.oplogChan = make(chan bson.M)
 	if s, err := mgo.Dial(p.src); err == nil {
 		p.srcSession = s
+		p.srcSession.SetSocketTimeout(0) // locating oplog may be slow
 	} else {
 		return nil
 	}
-	p.nWorkers = 8
-	if p.nWorkers > 16 {
-		return nil
+	p.nWorkers = runtime.NumCPU()
+	if p.nWorkers > 32 {
+		p.nWorkers = 32
 	}
 	for i := 0; i < p.nWorkers; i++ {
 		worker := NewWorker(p.dst, i)
 		if worker != nil {
 			p.workers[i] = worker
-			go worker.Run()
+			go worker.Run() // concurrent oplog replaying
 		} else {
 			return nil
 		}
@@ -138,14 +141,15 @@ func NewOplogReplayer(src string, dst string, optime bson.MongoTimestamp) *Oplog
 
 // dispatch oplog to workers
 func (p *OplogReplayer) Run() error {
+	log.Printf("locating optime %v\n", utils.GetTimestampFromOptime(p.optime))
 	cursor := p.srcSession.DB("local").C("oplog.rs").Find(bson.M{"ts": bson.M{"$gte": p.optime}}).Tail(-1)
 	n := 0
 	for {
 		var oplog bson.M
 		if cursor.Next(&oplog) {
-			// [command] should excute until all previous operations done to guatantee sequence
+			// **COMMAND** should excute until all previous operations done to guatantee sequence
 			// worker-0 is the master goroutine, all commands will be sent to it
-			// [insert/update/delete] hash to different workers
+			// INSERT/UPDATE/DELETE hash to different workers
 			switch oplog["op"] {
 			case "c":
 				// wait for all previous operations done
@@ -179,12 +183,12 @@ func (p *OplogReplayer) Run() error {
 			case "d":
 				oid, err := utils.GetObjectIdFromOplog(oplog)
 				if err != nil {
-					fmt.Println("ERROR", err)
+					log.Fatal("FATAL GetObjectIdFromOplog", err)
 					continue
 				}
 				bytes, err := bson.Marshal(bson.M{"_id": oid})
 				if err != nil {
-					fmt.Println("ERROR oid to bytes", err)
+					log.Fatal("FATAL oid to bytes", err)
 					continue
 				}
 				wid := crc32.ChecksumIEEE(bytes) % uint32(p.nWorkers)
@@ -192,26 +196,24 @@ func (p *OplogReplayer) Run() error {
 			}
 			n += 1
 			if n%1000 == 0 {
+				// get optime of the oldest oplog that has been replayed
 				var optime bson.MongoTimestamp
 				optime = (1 << 63) - 1
-				//fmt.Println("max", optime)
 				for i := 0; i < p.nWorkers; i++ {
 					tmp := p.workers[i].Optime()
 					if tmp < optime {
 						optime = tmp
 					}
-					//fmt.Println(i, tmp)
 				}
-				//fmt.Println("done", optime)
 				p.optime = optime
-				fmt.Println(time.Now(), n, utils.GetTimeFromOptime(p.optime), utils.GetTimestampFromOptime(p.optime))
+				log.Printf("replay %d, sync to %v %v", n, utils.GetTimeFromOptime(p.optime), utils.GetTimestampFromOptime(p.optime))
 			}
+		} else {
+			log.Fatal("tail oplog failed")
 		}
 	}
+	if err := cursor.Close(); err != nil {
+		log.Fatal("tail oplog failed", err)
+	}
 	return nil
-}
-
-// push oplog
-func (p *OplogReplayer) Push(oplog bson.M) {
-	p.oplogChan <- oplog
 }

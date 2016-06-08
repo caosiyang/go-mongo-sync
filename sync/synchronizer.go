@@ -5,7 +5,8 @@ package sync
 
 import (
 	"errors"
-	"fmt"
+	"log"
+	"runtime"
 	"strings"
 	"time"
 
@@ -23,8 +24,8 @@ type Synchronizer struct {
 }
 
 // NewSynchronizer
-// - connect
-// - get optime
+//   - connect
+//   - get optime
 func NewSynchronizer(config Config) *Synchronizer {
 	p := new(Synchronizer)
 	p.config = config
@@ -34,9 +35,9 @@ func NewSynchronizer(config Config) *Synchronizer {
 		p.srcSession.SetSyncTimeout(0)
 		p.srcSession.SetMode(mgo.Strong, false)
 		p.srcSession.SetCursorTimeout(0)
-		fmt.Printf("connected %s\n", p.config.From)
+		log.Printf("connected to %s\n", p.config.From)
 	} else {
-		fmt.Println(err, p.config.From)
+		log.Println(err, p.config.From)
 		return nil
 	}
 	if s, err := mgo.DialWithTimeout(p.config.To, time.Second*3); err == nil {
@@ -45,26 +46,26 @@ func NewSynchronizer(config Config) *Synchronizer {
 		p.dstSession.SetSyncTimeout(0)
 		p.dstSession.SetSafe(&mgo.Safe{W: 1})
 		p.dstSession.SetMode(mgo.Eventual, false)
-		fmt.Printf("connected %s\n", p.config.To)
+		log.Printf("connected to %s\n", p.config.To)
 	} else {
-		fmt.Println(err, p.config.To)
+		log.Println(err, p.config.To)
 		return nil
 	}
 	if optime, err := utils.GetOptime(p.srcSession); err == nil {
 		p.optime = optime
 	} else {
-		fmt.Println(err)
+		log.Println(err)
 		return nil
 	}
-	fmt.Printf("optime: %v\n", p.optime)
-	fmt.Printf("time: %v\n", utils.GetTimeFromOptime(p.optime))
-	fmt.Printf("optime: %v\n", utils.GetTimestampFromOptime(p.optime))
+	log.Printf("optime: %v %v\n", utils.GetTimestampFromOptime(p.optime), utils.GetTimeFromOptime(p.optime))
 	return p
 }
 
 func (p *Synchronizer) Run() error {
-	if err := p.initialSync(); err != nil {
-		return err
+	if !p.config.OplogOnly {
+		if err := p.initialSync(); err != nil {
+			return err
+		}
 	}
 	if err := p.oplogSync(); err != nil {
 		return err
@@ -83,10 +84,10 @@ func (p *Synchronizer) oplogSync() error {
 	if replayer == nil {
 		return errors.New("NewOplogReplayer failed")
 	}
-	fmt.Println("NewOplogReplayer done")
 	replayer.Run()
 	return nil
 }
+
 func (p *Synchronizer) syncDatabases() error {
 	dbnames, err := p.srcSession.DatabaseNames()
 	if err != nil {
@@ -95,7 +96,7 @@ func (p *Synchronizer) syncDatabases() error {
 	for _, dbname := range dbnames {
 		if dbname != "local" && dbname != "admin" {
 			if err := p.syncDatabase(dbname); err != nil {
-				fmt.Println("sync database:", err)
+				log.Println("sync database:", err)
 			}
 		}
 	}
@@ -107,19 +108,19 @@ func (p *Synchronizer) syncDatabase(dbname string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("sync database:", dbname)
+	log.Printf("sync database '%s'\n", dbname)
 	for _, collname := range collnames {
 		// skip collections whose name starts with "system."
 		if strings.Index(collname, "system.") == 0 {
 			continue
 		}
-		fmt.Println("\tsync collection:", collname)
+		log.Printf("\tsync collection '%s.%s'\n", dbname, collname)
 		coll := p.srcSession.DB(dbname).C(collname)
 
 		// create indexes
 		if indexes, err := coll.Indexes(); err == nil {
 			for _, index := range indexes {
-				fmt.Println("\t\tcreate index:", index)
+				log.Println("\t\tcreate index:", index)
 				if err := p.dstSession.DB(dbname).C(collname).EnsureIndex(index); err != nil {
 					return err
 				}
@@ -128,38 +129,48 @@ func (p *Synchronizer) syncDatabase(dbname string) error {
 			return err
 		}
 
-		// sync documents
+		nworkers := runtime.NumCPU()
+		docs := make(chan bson.M, 10000)
+		done := make(chan struct{}, nworkers)
+		for i := 0; i < nworkers; i++ {
+			go p.write_document(i, dbname, collname, docs, done)
+		}
+
 		n := 0
-		c := make(chan bool, 20) // 20 concurrent goroutines
-		cursor := coll.Find(nil).Snapshot().Iter()
+		query := coll.Find(nil)
+		cursor := query.Snapshot().Iter()
+		total, _ := query.Count()
+
 		for {
 			var doc bson.M
 			if cursor.Next(&doc) {
-				c <- true
-				go p.write_document(dbname, collname, doc, c)
+				docs <- doc
 				n++
 				if n%10000 == 0 {
-					fmt.Printf("\t\t%d records done\n", n)
+					log.Printf("\t\t%s.%s %d/%d (%.2f%%)\n", dbname, collname, n, total, float64(n)/float64(total)*100)
 				}
 			} else {
-				fmt.Printf("\t\t%d records total\n", n)
+				log.Printf("\t\t%s.%s %d/%d (%.2f%%)\n", dbname, collname, n, total, float64(n)/float64(total)*100)
+				cursor.Close()
+				close(docs)
 				break
 			}
 		}
-		if err := cursor.Close(); err != nil {
-			fmt.Println("close cursor", err)
-			return err
+
+		// wait for all workers done
+		for i := 0; i < nworkers; i++ {
+			<-done
 		}
 	}
 	return nil
 }
 
-func (p *Synchronizer) write_document(dbname string, collname string, doc bson.M, c chan bool) error {
-	// TODO failover
-	defer func() { <-c }()
-	if _, err := p.dstSession.Clone().DB(dbname).C(collname).UpsertId(doc["_id"], doc); err != nil {
-		fmt.Println("write document:", err)
-		return err
+func (p *Synchronizer) write_document(id int, dbname string, collname string, docs <-chan bson.M, done chan<- struct{}) {
+	for doc := range docs {
+		//if _, err := p.dstSession.Clone().DB(dbname).C(collname).UpsertId(doc["_id"], doc); err != nil {
+		if err := p.dstSession.Clone().DB(dbname).C(collname).Insert(doc); err != nil {
+			log.Println("write document:", err)
+		}
 	}
-	return nil
+	done <- struct{}{}
 }
