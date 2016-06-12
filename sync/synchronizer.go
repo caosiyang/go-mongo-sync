@@ -129,6 +129,13 @@ func (p *Synchronizer) syncDatabase(dbname string) error {
 			return err
 		}
 
+		query := coll.Find(nil)
+		total, _ := query.Count()
+		if total == 0 {
+			log.Printf("\t\tskip empty collection '%s.%s'\n", dbname, collname)
+			continue
+		}
+
 		nworkers := runtime.NumCPU()
 		docs := make(chan bson.M, 10000)
 		done := make(chan struct{}, nworkers)
@@ -137,9 +144,7 @@ func (p *Synchronizer) syncDatabase(dbname string) error {
 		}
 
 		n := 0
-		query := coll.Find(nil)
 		cursor := query.Snapshot().Iter()
-		total, _ := query.Count()
 
 		for {
 			var doc bson.M
