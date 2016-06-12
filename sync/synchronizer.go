@@ -117,22 +117,24 @@ func (p *Synchronizer) syncDatabase(dbname string) error {
 		log.Printf("\tsync collection '%s.%s'\n", dbname, collname)
 		coll := p.srcSession.DB(dbname).C(collname)
 
-		// create indexes
-		if indexes, err := coll.Indexes(); err == nil {
-			for _, index := range indexes {
-				log.Println("\t\tcreate index:", index)
-				if err := p.dstSession.DB(dbname).C(collname).EnsureIndex(index); err != nil {
-					return err
+		if !p.config.IgnoreIndex {
+			// create indexes
+			if indexes, err := coll.Indexes(); err == nil {
+				for _, index := range indexes {
+					log.Println("\t\tcreate index:", index)
+					if err := p.dstSession.DB(dbname).C(collname).EnsureIndex(index); err != nil {
+						return err
+					}
 				}
+			} else {
+				return err
 			}
-		} else {
-			return err
 		}
 
 		query := coll.Find(nil)
 		total, _ := query.Count()
 		if total == 0 {
-			log.Printf("\t\tskip empty collection '%s.%s'\n", dbname, collname)
+			log.Print("\t\tskip empty collection")
 			continue
 		}
 
@@ -174,7 +176,7 @@ func (p *Synchronizer) write_document(id int, dbname string, collname string, do
 	for doc := range docs {
 		//if _, err := p.dstSession.Clone().DB(dbname).C(collname).UpsertId(doc["_id"], doc); err != nil {
 		if err := p.dstSession.Clone().DB(dbname).C(collname).Insert(doc); err != nil {
-			log.Println("write document:", err)
+			log.Println("\twrite document:", err)
 		}
 	}
 	done <- struct{}{}

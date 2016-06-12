@@ -18,13 +18,14 @@ type Config struct {
 	DstPort     int
 	StartOptime int
 	OplogOnly   bool
-	//Log         string
+	IgnoreIndex bool
 }
 
 // load and parse command-line flags
 func (p *Config) Load() error {
 	flag.StringVar(&p.From, "from", "", "source, should be a member of replica-set")
 	flag.StringVar(&p.To, "to", "", "destination, should be a mongos or mongod instance")
+	flag.BoolVar(&p.IgnoreIndex, "ignore-index", false, "ignore index")
 	flag.BoolVar(&p.OplogOnly, "oplog", false, "replay oplog only")
 	flag.Parse()
 	if err := p.validate(); err != nil {
@@ -52,6 +53,9 @@ func (p *Config) validate() error {
 func (p *Config) print() {
 	log.Printf("from: %s:%d\n", p.SrcHost, p.SrcPort)
 	log.Printf("to:   %s:%d\n", p.DstHost, p.DstPort)
+	if p.IgnoreIndex {
+		log.Println("ignoreIndex: true")
+	}
 	if p.OplogOnly {
 		log.Println("oplogOnly: true")
 	}

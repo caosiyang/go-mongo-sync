@@ -141,12 +141,25 @@ func NewOplogReplayer(src string, dst string, optime bson.MongoTimestamp) *Oplog
 
 // dispatch oplog to workers
 func (p *OplogReplayer) Run() error {
-	log.Printf("locating optime %v\n", utils.GetTimestampFromOptime(p.optime))
-	cursor := p.srcSession.DB("local").C("oplog.rs").Find(bson.M{"ts": bson.M{"$gte": p.optime}}).Tail(-1)
+	log.Printf("locating oplog at %v\n", utils.GetTimestampFromOptime(p.optime))
+Begin:
+	iter := p.srcSession.DB("local").C("oplog.rs").Find(bson.M{"ts": bson.M{"$gte": p.optime}}).Tail(-1)
 	n := 0
+	oplog_valid := false
+
 	for {
 		var oplog bson.M
-		if cursor.Next(&oplog) {
+		if iter.Next(&oplog) {
+			if !oplog_valid {
+				if oplog["ts"] != p.optime {
+					log.Fatal("oplog is stale, except %v, current %d",
+						utils.GetTimestampFromOptime(p.optime),
+						utils.GetTimestampFromOptime(oplog["ts"].(bson.MongoTimestamp)))
+				}
+				oplog_valid = true
+				log.Print("oplog is OK")
+				continue
+			}
 			// **COMMAND** should excute until all previous operations done to guatantee sequence
 			// worker-0 is the master goroutine, all commands will be sent to it
 			// INSERT/UPDATE/DELETE hash to different workers
@@ -209,11 +222,22 @@ func (p *OplogReplayer) Run() error {
 				log.Printf("replay %d, sync to %v %v", n, utils.GetTimeFromOptime(p.optime), utils.GetTimestampFromOptime(p.optime))
 			}
 		} else {
-			log.Fatal("tail oplog failed")
+			if err := iter.Err(); err != nil {
+				log.Print("tail oplog failed:", err)
+				switch err.Error() {
+				case "EOF":
+					p.srcSession = utils.Reconnect(p.src)
+					p.srcSession.SetSocketTimeout(0) // locating oplog may be slow
+					goto Begin
+				default:
+					log.Fatal("unknown exception:", err)
+				}
+			}
+			time.Sleep(time.Millisecond * 100)
 		}
 	}
-	if err := cursor.Close(); err != nil {
-		log.Fatal("tail oplog failed", err)
+	if err := iter.Close(); err != nil {
+		log.Fatal("kill cursor failed:", err)
 	}
 	return nil
 }
