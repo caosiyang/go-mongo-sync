@@ -139,19 +139,19 @@ func (p *Synchronizer) syncDatabase(dbname string) error {
 		}
 
 		nworkers := runtime.NumCPU()
-		docs := make(chan bson.M, 10000)
+		channel := make(chan interface{}, 10000)
 		done := make(chan struct{}, nworkers)
 		for i := 0; i < nworkers; i++ {
-			go p.write_document(i, dbname, collname, docs, done)
+			go p.write_document(i, dbname, collname, channel, done)
 		}
 
 		n := 0
 		cursor := query.Snapshot().Iter()
 
 		for {
-			var doc bson.M
+			var doc interface{}
 			if cursor.Next(&doc) {
-				docs <- doc
+				channel <- doc
 				n++
 				if n%10000 == 0 {
 					log.Printf("\t\t%s.%s %d/%d (%.2f%%)\n", dbname, collname, n, total, float64(n)/float64(total)*100)
@@ -159,7 +159,7 @@ func (p *Synchronizer) syncDatabase(dbname string) error {
 			} else {
 				log.Printf("\t\t%s.%s %d/%d (%.2f%%)\n", dbname, collname, n, total, float64(n)/float64(total)*100)
 				cursor.Close()
-				close(docs)
+				close(channel)
 				break
 			}
 		}
@@ -172,11 +172,26 @@ func (p *Synchronizer) syncDatabase(dbname string) error {
 	return nil
 }
 
-func (p *Synchronizer) write_document(id int, dbname string, collname string, docs <-chan bson.M, done chan<- struct{}) {
-	for doc := range docs {
-		//if _, err := p.dstSession.Clone().DB(dbname).C(collname).UpsertId(doc["_id"], doc); err != nil {
-		if err := p.dstSession.Clone().DB(dbname).C(collname).Insert(doc); err != nil {
-			log.Println("\twrite document:", err)
+func (p *Synchronizer) write_document(id int, dbname string, collname string, channel <-chan interface{}, done chan<- struct{}) {
+	coll := p.dstSession.Clone().DB(dbname).C(collname)
+	ndocs := 1000
+	docs := make([]interface{}, ndocs)
+	i := 0
+	for doc := range channel {
+		docs[i] = doc
+		i++
+		if i == ndocs {
+			if err := coll.Insert(docs...); err != nil {
+				log.Println("\twrite document:", err)
+			}
+			i = 0
+		}
+	}
+	if i > 0 {
+		for j := 0; j < i; j++ {
+			if err := coll.Insert(docs[j]); err != nil {
+				log.Println("\twrite document:", err)
+			}
 		}
 	}
 	done <- struct{}{}

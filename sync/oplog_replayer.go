@@ -152,7 +152,7 @@ Begin:
 		if iter.Next(&oplog) {
 			if !oplog_valid {
 				if oplog["ts"] != p.optime {
-					log.Fatal("oplog is stale, except %v, current %d",
+					log.Fatal("oplog is stale, except %v, current %v",
 						utils.GetTimestampFromOptime(p.optime),
 						utils.GetTimestampFromOptime(oplog["ts"].(bson.MongoTimestamp)))
 				}
