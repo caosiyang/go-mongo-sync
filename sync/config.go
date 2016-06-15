@@ -27,8 +27,9 @@ func (p *Config) Load() error {
 	flag.StringVar(&p.From, "from", "", "source, a member of replica-set, value should be a hostportstr like 'host:port'")
 	flag.StringVar(&p.To, "to", "", "destination, a mongos or mongod instance, value should be a hostportstr like 'host:port'")
 	flag.BoolVar(&p.IgnoreIndex, "ignore-index", false, "not create index for collections")
-	flag.BoolVar(&p.OplogOnly, "oplog", false, "replay oplog only")
 	flag.BoolVar(&p.Upsert, "upsert", false, "upsert documents in initial sync, insert documents if not set")
+	flag.BoolVar(&p.OplogOnly, "oplog", false, "replay oplog only")
+	flag.IntVar(&p.StartOptime, "start-optime", 0, "start optime, the number of seconds elapsed since January 1 1970 UTC, use this with '--oplog'")
 	flag.Parse()
 	if err := p.validate(); err != nil {
 		return err

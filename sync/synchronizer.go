@@ -51,11 +51,15 @@ func NewSynchronizer(config Config) *Synchronizer {
 		log.Println(err, p.config.To)
 		return nil
 	}
-	if optime, err := utils.GetOptime(p.srcSession); err == nil {
-		p.optime = optime
+	if p.config.StartOptime > 0 {
+		p.optime = bson.MongoTimestamp(int64(p.config.StartOptime) << 32)
 	} else {
-		log.Println(err)
-		return nil
+		if optime, err := utils.GetOptime(p.srcSession); err == nil {
+			p.optime = optime
+		} else {
+			log.Println(err)
+			return nil
+		}
 	}
 	log.Printf("optime is %v %v\n", utils.GetTimestampFromOptime(p.optime), utils.GetTimeFromOptime(p.optime))
 	return p

@@ -147,6 +147,11 @@ Begin:
 	n := 0
 	oplog_valid := false
 
+	if inc := int64(p.optime) << 32 >> 32; inc == 0 {
+		oplog_valid = true
+		log.Print("start optime specified by user, skip verification")
+	}
+
 	for {
 		var oplog bson.M
 		if iter.Next(&oplog) {
@@ -209,17 +214,21 @@ Begin:
 			}
 			n += 1
 			if n%1000 == 0 {
-				// get optime of the oldest oplog that has been replayed
-				var optime bson.MongoTimestamp
-				optime = (1 << 63) - 1
+				// get optime of the lastest oplog has been replayed
+				var optime bson.MongoTimestamp = 0
+				//optime = (1 << 63) - 1
 				for i := 0; i < p.nWorkers; i++ {
-					tmp := p.workers[i].Optime()
-					if tmp < optime {
-						optime = tmp
+					ts := p.workers[i].Optime()
+					if optime < ts {
+						optime = ts
 					}
 				}
 				p.optime = optime
-				log.Printf("replay %d, sync to %v %v", n, utils.GetTimeFromOptime(p.optime), utils.GetTimestampFromOptime(p.optime))
+				log.Printf("\t%d replayed, %d secs delay, sync to %v %v",
+					n,
+					time.Now().Unix()-utils.GetTimeFromOptime(p.optime).Unix(),
+					utils.GetTimeFromOptime(p.optime),
+					utils.GetTimestampFromOptime(p.optime))
 			}
 		} else {
 			if err := iter.Err(); err != nil {

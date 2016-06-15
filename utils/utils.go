@@ -5,7 +5,7 @@ package utils
 
 import (
 	"errors"
-	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -37,7 +37,7 @@ type ReplicaSetMember struct {
 // retry until connect
 func Reconnect(hostportstr string) *mgo.Session {
 	for {
-		fmt.Println("reconnect", hostportstr)
+		log.Println("reconnect", hostportstr)
 		if s, err := mgo.DialWithTimeout(hostportstr, time.Second*3); err == nil {
 			return s
 		}
@@ -88,37 +88,36 @@ func GetObjectIdFromOplog(oplog bson.M) (oid interface{}, err error) {
 
 // replay oplog
 func ReplayOplog(session *mgo.Session, oplog bson.M) error {
-	//ts := oplog["ts"]
 	op := oplog["op"]
 	ns := oplog["ns"]
 	switch op {
 	case "i": // insert
 		dbname := strings.Split(ns.(string), ".")[0]
 		collname := strings.Split(ns.(string), ".")[1]
-		//if err := session.DB(dbname).C(collname).Insert(oplog["o"]); err != nil {
-		id := oplog["o"].(bson.M)["_id"]
-		if _, err := session.DB(dbname).C(collname).UpsertId(id, oplog["o"]); err != nil {
-			fmt.Println("insert", err)
+		//id := oplog["o"].(bson.M)["_id"]
+		//if _, err := session.DB(dbname).C(collname).UpsertId(id, oplog["o"]); err != nil {
+		if err := session.DB(dbname).C(collname).Insert(oplog["o"]); err != nil {
+			//log.Println("insert", err)
 			return err
 		}
 	case "u": // update
 		dbname := strings.Split(ns.(string), ".")[0]
 		collname := strings.Split(ns.(string), ".")[1]
 		if err := session.DB(dbname).C(collname).Update(oplog["o2"], oplog["o"]); err != nil {
-			//fmt.Println("update", err)
+			//log.Println("update", err)
 			return err
 		}
 	case "d": // delete
 		dbname := strings.Split(ns.(string), ".")[0]
 		collname := strings.Split(ns.(string), ".")[1]
 		if err := session.DB(dbname).C(collname).Remove(oplog["o"]); err != nil {
-			//fmt.Println(err)
+			//log.Println("delete", err)
 			return err
 		}
 	case "c": // command
 		dbname := strings.Split(ns.(string), ".")[0]
 		if err := session.DB(dbname).Run(oplog["o"], nil); err != nil {
-			//fmt.Println(err)
+			//log.Println("command", err)
 			return err
 		}
 	case "n": // no-op
