@@ -33,7 +33,7 @@ func NewSynchronizer(config Config) *Synchronizer {
 		p.srcSession = s
 		p.srcSession.SetSocketTimeout(0)
 		p.srcSession.SetSyncTimeout(0)
-		p.srcSession.SetMode(mgo.Strong, false)
+		p.srcSession.SetMode(mgo.Strong, false) // always read from primary
 		p.srcSession.SetCursorTimeout(0)
 		log.Printf("connected to %s\n", p.config.From)
 	} else {
@@ -57,7 +57,7 @@ func NewSynchronizer(config Config) *Synchronizer {
 		log.Println(err)
 		return nil
 	}
-	log.Printf("optime: %v %v\n", utils.GetTimestampFromOptime(p.optime), utils.GetTimeFromOptime(p.optime))
+	log.Printf("optime is %v %v\n", utils.GetTimestampFromOptime(p.optime), utils.GetTimeFromOptime(p.optime))
 	return p
 }
 
@@ -174,23 +174,33 @@ func (p *Synchronizer) syncDatabase(dbname string) error {
 
 func (p *Synchronizer) write_document(id int, dbname string, collname string, channel <-chan interface{}, done chan<- struct{}) {
 	coll := p.dstSession.Clone().DB(dbname).C(collname)
-	ndocs := 1000
-	docs := make([]interface{}, ndocs)
-	i := 0
-	for doc := range channel {
-		docs[i] = doc
-		i++
-		if i == ndocs {
-			if err := coll.Insert(docs...); err != nil {
-				log.Println("\twrite document:", err)
+	if p.config.Upsert {
+		// upsert
+		for doc := range channel {
+			if _, err := coll.UpsertId(doc.(bson.M)["_id"], doc); err != nil {
+				log.Println("\twrite failed:", err)
 			}
-			i = 0
 		}
-	}
-	if i > 0 {
-		for j := 0; j < i; j++ {
-			if err := coll.Insert(docs[j]); err != nil {
-				log.Println("\twrite document:", err)
+	} else {
+		// bulk insert
+		ndocs := 1000
+		docs := make([]interface{}, ndocs)
+		i := 0
+		for doc := range channel {
+			docs[i] = doc
+			i++
+			if i == ndocs {
+				if err := coll.Insert(docs...); err != nil {
+					log.Println("\twrite failed:", err)
+				}
+				i = 0
+			}
+		}
+		if i > 0 {
+			for j := 0; j < i; j++ {
+				if err := coll.Insert(docs[j]); err != nil {
+					log.Println("\twrite failed:", err)
+				}
 			}
 		}
 	}

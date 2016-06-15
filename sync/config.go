@@ -17,16 +17,18 @@ type Config struct {
 	DstHost     string
 	DstPort     int
 	StartOptime int
+	Upsert      bool
 	OplogOnly   bool
 	IgnoreIndex bool
 }
 
 // load and parse command-line flags
 func (p *Config) Load() error {
-	flag.StringVar(&p.From, "from", "", "source, should be a member of replica-set")
-	flag.StringVar(&p.To, "to", "", "destination, should be a mongos or mongod instance")
-	flag.BoolVar(&p.IgnoreIndex, "ignore-index", false, "ignore index")
+	flag.StringVar(&p.From, "from", "", "source, a member of replica-set, value should be a hostportstr like 'host:port'")
+	flag.StringVar(&p.To, "to", "", "destination, a mongos or mongod instance, value should be a hostportstr like 'host:port'")
+	flag.BoolVar(&p.IgnoreIndex, "ignore-index", false, "not create index for collections")
 	flag.BoolVar(&p.OplogOnly, "oplog", false, "replay oplog only")
+	flag.BoolVar(&p.Upsert, "upsert", false, "upsert documents in initial sync, insert documents if not set")
 	flag.Parse()
 	if err := p.validate(); err != nil {
 		return err
@@ -53,6 +55,9 @@ func (p *Config) validate() error {
 func (p *Config) print() {
 	log.Printf("from: %s:%d\n", p.SrcHost, p.SrcPort)
 	log.Printf("to:   %s:%d\n", p.DstHost, p.DstPort)
+	if p.Upsert {
+		log.Println("upsert: true")
+	}
 	if p.IgnoreIndex {
 		log.Println("ignoreIndex: true")
 	}
