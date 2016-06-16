@@ -138,7 +138,7 @@ func (p *Synchronizer) syncDatabase(dbname string) error {
 		query := coll.Find(nil)
 		total, _ := query.Count()
 		if total == 0 {
-			log.Print("\t\tskip empty collection")
+			log.Println("\t\tskip empty collection")
 			continue
 		}
 
@@ -161,6 +161,9 @@ func (p *Synchronizer) syncDatabase(dbname string) error {
 					log.Printf("\t\t%s.%s %d/%d (%.2f%%)\n", dbname, collname, n, total, float64(n)/float64(total)*100)
 				}
 			} else {
+				if err := cursor.Err(); err != nil {
+					log.Fatalln("initial sync abort:", err)
+				}
 				log.Printf("\t\t%s.%s %d/%d (%.2f%%)\n", dbname, collname, n, total, float64(n)/float64(total)*100)
 				cursor.Close()
 				close(channel)

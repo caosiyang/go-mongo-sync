@@ -149,7 +149,7 @@ Begin:
 
 	if inc := int64(p.optime) << 32 >> 32; inc == 0 {
 		oplog_valid = true
-		log.Print("start optime specified by user, skip verification")
+		log.Println("start optime specified by user, skip verification")
 	}
 
 	for {
@@ -162,7 +162,7 @@ Begin:
 						utils.GetTimestampFromOptime(oplog["ts"].(bson.MongoTimestamp)))
 				}
 				oplog_valid = true
-				log.Print("oplog is OK")
+				log.Println("oplog is OK")
 				continue
 			}
 			// **COMMAND** should excute until all previous operations done to guatantee sequence
@@ -201,18 +201,18 @@ Begin:
 			case "d":
 				oid, err := utils.GetObjectIdFromOplog(oplog)
 				if err != nil {
-					log.Fatal("FATAL GetObjectIdFromOplog", err)
+					log.Fatalln("FATAL GetObjectIdFromOplog", err)
 					continue
 				}
 				bytes, err := bson.Marshal(bson.M{"_id": oid})
 				if err != nil {
-					log.Fatal("FATAL oid to bytes", err)
+					log.Fatalln("FATAL oid to bytes", err)
 					continue
 				}
 				wid := crc32.ChecksumIEEE(bytes) % uint32(p.nWorkers)
 				p.workers[wid].Push(oplog)
 			}
-			n += 1
+			n++
 			if n%1000 == 0 {
 				// get optime of the lastest oplog has been replayed
 				var optime bson.MongoTimestamp = 0
@@ -223,7 +223,7 @@ Begin:
 						optime = ts
 					}
 				}
-				p.optime = optime
+				p.optime = optime // set current optime
 				log.Printf("\t%d replayed, %d secs delay, sync to %v %v",
 					n,
 					time.Now().Unix()-utils.GetTimeFromOptime(p.optime).Unix(),
@@ -232,21 +232,23 @@ Begin:
 			}
 		} else {
 			if err := iter.Err(); err != nil {
-				log.Print("tail oplog failed:", err)
+				log.Println("tail oplog failed:", err)
 				switch err.Error() {
 				case "EOF":
 					p.srcSession = utils.Reconnect(p.src)
 					p.srcSession.SetSocketTimeout(0) // locating oplog may be slow
 					goto Begin
+				case "invalid cursor":
+					goto Begin
 				default:
-					log.Fatal("unknown exception:", err)
+					log.Fatalln("unknown error:", err)
 				}
 			}
 			time.Sleep(time.Millisecond * 100)
 		}
 	}
 	if err := iter.Close(); err != nil {
-		log.Fatal("kill cursor failed:", err)
+		log.Fatalln("kill cursor failed:", err)
 	}
 	return nil
 }

@@ -11,13 +11,13 @@ func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	var config sync.Config
 	if err := config.Load(); err != nil {
-		log.Fatal(err)
+		log.Fatalln(err)
 	}
 	syncer := sync.NewSynchronizer(config)
 	if syncer == nil {
-		log.Fatal("NewSyncronizer failed")
+		log.Fatalln("NewSyncronizer failed")
 	}
 	if err := syncer.Run(); err != nil {
-		log.Fatal(err)
+		log.Fatalln(err)
 	}
 }
