@@ -73,7 +73,11 @@ func (p *Worker) Run() error {
 			// TODO
 			switch err.(type) {
 			case *mgo.LastError:
-				log.Println("LastError", err)
+				if mgo.IsDup(err) {
+					// duplicate key errors happened if initial sync took long time and new documents were inserted into mongodb
+				} else {
+					log.Println("getLastError", err)
+				}
 			default:
 				switch err.Error() {
 				case "not found":
