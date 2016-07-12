@@ -10,16 +10,17 @@ import (
 
 // Config implemention that parse from command arguments.
 type Config struct {
-	From        string
-	To          string
-	SrcHost     string
-	SrcPort     int
-	DstHost     string
-	DstPort     int
-	StartOptime int
-	Upsert      bool
-	OplogOnly   bool
-	IgnoreIndex bool
+	From          string
+	To            string
+	SrcHost       string
+	SrcPort       int
+	DstHost       string
+	DstPort       int
+	StartOptime   int
+	Upsert        bool
+	OplogOnly     bool
+	IgnoreIndex   bool
+	DirectConnect bool
 }
 
 // load and parse command-line flags
@@ -30,6 +31,7 @@ func (p *Config) Load() error {
 	flag.BoolVar(&p.Upsert, "upsert", false, "upsert documents in initial sync, insert documents if not set")
 	flag.BoolVar(&p.OplogOnly, "oplog", false, "replay oplog only")
 	flag.IntVar(&p.StartOptime, "start-optime", 0, "start optime, the number of seconds elapsed since January 1 1970 UTC, use this with '--oplog'")
+	flag.BoolVar(&p.DirectConnect, "direct-connect", false, "for source only, disable the automatic replica set server discovery logic and force the use of servers provided only (even if secondaries)")
 	flag.Parse()
 	if err := p.validate(); err != nil {
 		return err
@@ -54,8 +56,12 @@ func (p *Config) validate() error {
 
 // print config
 func (p *Config) print() {
+	log.Println("-------------------- configuration --------------------")
 	log.Printf("from: %s:%d\n", p.SrcHost, p.SrcPort)
 	log.Printf("to:   %s:%d\n", p.DstHost, p.DstPort)
+	if p.DirectConnect {
+		log.Println("directConnect: true")
+	}
 	if p.Upsert {
 		log.Println("upsert: true")
 	}
@@ -65,6 +71,8 @@ func (p *Config) print() {
 	if p.OplogOnly {
 		log.Println("oplogOnly: true")
 	}
+	log.Println("-------------------------------------------------------")
+	log.Println("")
 }
 
 // parse hostportstr

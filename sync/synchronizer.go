@@ -5,6 +5,7 @@ package sync
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"runtime"
 	"strings"
@@ -29,16 +30,31 @@ type Synchronizer struct {
 func NewSynchronizer(config Config) *Synchronizer {
 	p := new(Synchronizer)
 	p.config = config
-	if s, err := mgo.DialWithTimeout(p.config.From, time.Second*3); err == nil {
-		p.srcSession = s
-		p.srcSession.SetSocketTimeout(0)
-		p.srcSession.SetSyncTimeout(0)
-		p.srcSession.SetMode(mgo.Strong, false) // always read from primary
-		p.srcSession.SetCursorTimeout(0)
-		log.Printf("connected to %s\n", p.config.From)
+	if p.config.DirectConnect {
+		url := fmt.Sprintf("mongodb://%s/?connect=direct", p.config.From)
+		if s, err := mgo.DialWithTimeout(url, time.Second*3); err == nil {
+			p.srcSession = s
+			p.srcSession.SetSocketTimeout(0)
+			p.srcSession.SetSyncTimeout(0)
+			p.srcSession.SetMode(mgo.Monotonic, false) // allow to read from secondary
+			p.srcSession.SetCursorTimeout(0)
+			log.Printf("connected to %s\n", p.config.From)
+		} else {
+			log.Println(err, p.config.From)
+			return nil
+		}
 	} else {
-		log.Println(err, p.config.From)
-		return nil
+		if s, err := mgo.DialWithTimeout(p.config.From, time.Second*3); err == nil {
+			p.srcSession = s
+			p.srcSession.SetSocketTimeout(0)
+			p.srcSession.SetSyncTimeout(0)
+			p.srcSession.SetMode(mgo.Strong, false) // always read from primary
+			p.srcSession.SetCursorTimeout(0)
+			log.Printf("connected to %s\n", p.config.From)
+		} else {
+			log.Println(err, p.config.From)
+			return nil
+		}
 	}
 	if s, err := mgo.DialWithTimeout(p.config.To, time.Second*3); err == nil {
 		p.dstSession = s

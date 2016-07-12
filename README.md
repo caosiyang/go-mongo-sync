@@ -20,11 +20,12 @@ Source should be a replica set and destination could be a mongod/mongos instance
     Usage of ./go-mongo-sync:
       -from="": source, a member of replica-set, value should be a hostportstr like 'host:port'
       -to="": destination, a mongos or mongod instance, value should be a hostportstr like 'host:port'
+      -direct-connect=false: for source only, disable the automatic replica set server discovery logic and force the use of servers provided only (even if secondaries)
       -ignore-index=false: not create index for collections
       -oplog=false: replay oplog only
+      -start-optime=0: start optime, the number of seconds elapsed since January 1 1970 UTC, use this with '--oplog'
       -upsert=false: upsert documents in initial sync, insert documents if not set
 
 ## TODO
 
 - support authentication for source and destination
-- specify startOptime in '--oplog' mode
